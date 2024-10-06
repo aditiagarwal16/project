@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Monitoring System</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        #patientDataSection, #patientDashboard {
+            display: none; /* Hide sections initially */
+        }
+        .nurse-dashboard {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        h2 {
+            color: #333;
+        }
+        .alert {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>Nurse Login</h1>
+    <form id="loginForm">
+        <label for="username">Username:</label>
+        <input type="text" id="username" required>
+        <br>
+        <label for="password">Password:</label>
+        <input type="password" id="password" required>
+        <br>
+        <button type="submit">Login</button>
+    </form>
+    <div id="message"></div>
+
+    <div id="patientDataSection">
+        <h2>Patient Data Entry</h2>
+        <form id="patientDataForm">
+            <label for="bmi">BMI:</label>
+            <input type="number" id="bmi" step="0.01" required>
+            <br>
+            <label for="bloodPressure">Blood Pressure:</label>
+            <input type="text" id="bloodPressure" required>
+            <br>
+            <label for="heartRate">Heart Rate:</label>
+            <input type="number" id="heartRate" required>
+            <br>
+            <label for="temperature">Temperature:</label>
+            <input type="number" id="temperature" step="0.1" required>
+            <br>
+            <button type="submit">Submit Data</button>
+        </form>
+    </div>
+
+    <div id="patientDashboard">
+        <h2>Patient Dashboard</h2>
+        <div id="nurse1Dashboard" class="nurse-dashboard">
+            <h3>Nurse 1 - Patient 1</h3>
+            <ul id="patient1List"></ul>
+            <div id="patient1Alert" class="alert"></div>
+            <div id="patient1Graphs"></div> <!-- Placeholder for graphs -->
+
+            <!-- Comment Section for Patient 1 -->
+            <h4>Comments:</h4>
+            <input type="text" id="patient1Comment" placeholder="Leave a comment...">
+            <button id="submitComment1">Submit Comment</button>
+            <div id="patient1CommentsList"></div>
+        </div>
+        <div id="nurse2Dashboard" class="nurse-dashboard">
+            <h3>Nurse 2 - Patient 2</h3>
+            <ul id="patient2List"></ul>
+            <div id="patient2Alert" class="alert"></div>
+            <div id="patient2Graphs"></div> <!-- Placeholder for graphs -->
+
+            <!-- Comment Section for Patient 2 -->
+            <h4>Comments:</h4>
+            <input type="text" id="patient2Comment" placeholder="Leave a comment...">
+            <button id="submitComment2">Submit Comment</button>
+            <div id="patient2CommentsList"></div>
+        </div>
+    </div>
+
+    <script>
+        const nurses = [
+            { id: 1, username: 'nurse1', password: 'password1', patientId: 1 },
+            { id: 2, username: 'nurse2', password: 'password2', patientId: 2 }
+        ];
+
+        const patients = [
+            { id: 1, name: 'Patient 1', bmi: 29.56, bloodPressure: '118/76', heartRate: 61, temperature: 40.4, alertMessage: 'Patient 1: High BMI! Check the patient.<br>Patient 1: High temperature! Check the patient.<br>' },
+            { id: 2, name: 'Patient 2', bmi: null, bloodPressure: null, heartRate: null, temperature: null, alertMessage: '' }
+        ];
+
+        const client = mqtt.connect('mqtt://localhost:1883'); // Connect to MQTT broker
+        const topic = 'patient/data';
+
+        // Initialize comment storage
+        const patientComments = {
+            1: [],
+            2: []
+        };
+
+        // Login functionality
+        document.getElementById('loginForm').onsubmit = function (e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            const nurse = nurses.find(n => n.username === username && n.password === password);
+            if (nurse) {
+                alert('Login successful!');
+                document.getElementById('patientDataSection').style.display = 'block'; // Show data entry
+                document.getElementById('loginForm').style.display = 'none'; // Hide login form
+                displayPatientData(nurse.patientId); // Call function to display assigned patient
+                drawGraphs(nurse.patientId); // Draw initial graphs
+            } else {
+                document.getElementById('message').innerText = 'Invalid username or password.';
+            }
+        };
+
+        // Display patient data for the logged-in nurse
+        function displayPatientData(patientId) {
+            const patient = patients.find(p => p.id === patientId);
+            const patientList = document.getElementById(patientId === 1 ? 'patient1List' : 'patient2List');
+            const patientAlert = document.getElementById(patientId === 1 ? 'patient1Alert' : 'patient2Alert');
+            patientList.innerHTML = ''; // Clear existing list
+            patientAlert.innerHTML = ''; // Clear existing alerts
+
+            if (patient) {
+                const li = document.createElement('li');
+                li.innerText = `BMI: ${patient.bmi}, Blood Pressure: ${patient.bloodPressure}, Heart Rate: ${patient.heartRate}, Temperature: ${patient.temperature}`;
+                patientList.appendChild(li);
+
+                // Show alert message if it exists
+                if (patient.alertMessage) {
+                    patientAlert.innerHTML = patient.alertMessage; 
+                }
+            }
+            document.getElementById('patientDashboard').style.display = 'block'; // Show dashboard
+        }
+
+        // Patient data submission
+        document.getElementById('patientDataForm').onsubmit = function (e) {
+            e.preventDefault();
+
+            const patientData = {
+                id: patients[0].id, // Assuming nurse1 is always dealing with Patient 1
+                bmi: parseFloat(document.getElementById('bmi').value),
+                bloodPressure: document.getElementById('bloodPressure').value,
+                heartRate: parseInt(document.getElementById('heartRate').value),
+                temperature: parseFloat(document.getElementById('temperature').value)
+            };
+
+            // Publish patient data to MQTT
+            client.publish(topic, JSON.stringify(patientData), { qos: 1 }, (err) => {
+                if (err) {
+                    console.error('Failed to publish message:', err);
+                } else {
+                    alert('Data submitted successfully!');
+                }
+            });
+        };
+
+        // Subscribe to the patient data topic
+        client.on('connect', () => {
+            client.subscribe(topic);
+        });
+
+        // Update patient data from MQTT messages
+        client.on('message', (topic, message) => {
+            const patientData = JSON.parse(message.toString());
+            const patient = patients.find(p => p.id === patientData.id);
+            if (patient) {
+                // Update patient data
+                patient.bmi = patientData.bmi;
+                patient.bloodPressure = patientData.bloodPressure;
+                patient.heartRate = patientData.heartRate;
+                patient.temperature = patientData.temperature;
+
+                // Validate the patient data and update alerts
+                const alertMessage = validatePatientData(patient);
+                patient.alertMessage = alertMessage; // Update alert message
+                
+                displayPatientData(patient.id); // Update dashboard with new data
+                drawGraphs(patient.id); // Update graphs with new data
+            }
+        });
+
+        // Validate patient data
+        function validatePatientData(patient) {
+            let alertMessage = '';
+
+            if (patient.bmi < 18.5) {
+                alertMessage += `${patient.name}: Low BMI! Check the patient.<br>`;
+            } else if (patient.bmi > 25) {
+                alertMessage += `${patient.name}: High BMI! Check the patient.<br>`;
+            }
+
+            const [systolic, diastolic] = patient.bloodPressure.split('/').map(Number);
+            if (systolic < 90 || diastolic < 60) {
+                alertMessage += `${patient.name}: Low Blood Pressure! Check the patient.<br>`;
+            } else if (systolic > 120 || diastolic > 80) {
+                alertMessage += `${patient.name}: High Blood Pressure! Check the patient.<br>`;
+            }
+
+            if (patient.heartRate < 60) {
+                alertMessage += `${patient.name}: Low Heart Rate! Check the patient.<br>`;
+            } else if (patient.heartRate > 100) {
+                alertMessage += `${patient.name}: High Heart Rate! Check the patient.<br>`;
+            }
+
+            if (patient.temperature < 36.0) {
+                alertMessage += `${patient.name}: Low Temperature! Check the patient.<br>`;
+            } else if (patient.temperature > 38.0) {
+                alertMessage += `${patient.name}: High Temperature! Check the patient.<br>`;
+            }
+
+            return alertMessage;
+        }
+
+        // Draw graphs for each patient
+        function drawGraphs(patientId) {
+            const patient = patients.find(p => p.id === patientId);
+            const graphsDiv = document.getElementById(patientId === 1 ? 'patient1Graphs' : 'patient2Graphs');
+
+            // Generate random historical data for a week for demonstration
+            const history = {
+                bmi: Array.from({ length: 7 }, () => (Math.random() * 30 + 15).toFixed(2)),
+                bloodPressure: Array.from({ length: 7 }, () => `${Math.floor(Math.random() * 40 + 90)}/${Math.floor(Math.random() * 30 + 60)}`),
+                heartRate: Array.from({ length: 7 }, () => Math.floor(Math.random() * 40 + 60)),
+                temperature: Array.from({ length: 7 }, () => (Math.random() * 5 + 36).toFixed(1))
+            };
+
+            // Clear previous graphs
+            graphsDiv.innerHTML = '';
+
+            // Create and display graphs
+            Object.keys(history).forEach(key => {
+                const data = history[key];
+                const trace = {
+                    x: Array.from({ length: 7 }, (_, i) => `Day ${i + 1}`),
+                    y: data,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: key.charAt(0).toUpperCase() + key.slice(1)
+                };
+                
+                const layout = {
+                    title: `${patient.name} - ${key.charAt(0).toUpperCase() + key.slice(1)} over a Week`,
+                    xaxis: { title: 'Days' },
+                    yaxis: { title: key.charAt(0).toUpperCase() + key.slice(1) }
+                };
+                
+                const graphDiv = document.createElement('div');
+                graphDiv.style.width = '100%';
+                graphDiv.style.height = '300px';
+                graphsDiv.appendChild(graphDiv);
+                Plotly.newPlot(graphDiv, [trace], layout);
+            });
+        }
+
+        // Submit comment functionality
+        document.getElementById('submitComment1').onclick = function () {
+            const comment = document.getElementById('patient1Comment').value;
+            if (comment) {
+                patientComments[1].push(comment); // Store comment for Patient 1
+                document.getElementById('patient1Comment').value = ''; // Clear input
+                displayComments(1); // Update displayed comments
+            }
+        };
+
+        document.getElementById('submitComment2').onclick = function () {
+            const comment = document.getElementById('patient2Comment').value;
+            if (comment) {
+                patientComments[2].push(comment); // Store comment for Patient 2
+                document.getElementById('patient2Comment').value = ''; // Clear input
+                displayComments(2); // Update displayed comments
+            }
+        };
+
+        // Function to display comments for a patient
+        function displayComments(patientId) {
+            const commentsList = document.getElementById(patientId === 1 ? 'patient1CommentsList' : 'patient2CommentsList');
+            commentsList.innerHTML = ''; // Clear previous comments
+            patientComments[patientId].forEach(comment => {
+                const commentElement = document.createElement('div');
+                commentElement.textContent = comment; // Create a div for each comment
+                commentsList.appendChild(commentElement); // Append to the comments list
+            });
+        }
+    </script>
+</body>
+</html>
